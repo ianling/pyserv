@@ -18,7 +18,7 @@ if isfile('client_hostkey') and isfile('client_hostkey.pub'):
     pubkey = RSA.importKey(pubkeyString)
 else:
     print 'Generating new host RSA keys...'
-    privkey = RSA.generate(16384)
+    privkey = RSA.generate(4096)
     pubkey = privkey.publickey()
     # write them to files for future use
     privkeyString = privkey.exportKey()
@@ -39,9 +39,10 @@ running = True
 # Connection Stages:
 # 0 - Initial TCP connection established
 # 1 - Banners exchanged
-# 2 - Server public RSA key received, client public key sent
-# 3 - Server sends client public key back, encrypted with client's public key
-# 4 - Encryption negotiated, connection fully established.
+# 2 - Public RSA keys exchanged
+# 3 - Client sends server challenge
+# 4 - Server responds to challenge
+# 5 - Encryption negotiated, connection fully established.
 connectionStage = 0
 
 while running:
@@ -50,26 +51,39 @@ while running:
         if i == s:
             data = s.recv(size).strip()
             if data:
-                if connectionStage == 0:
+                if connectionStage == 0: # send banner
                     if data == 'BANNER':
                         print 'Sending banner...'
                         s.send('RETURNBANNER')
                         connectionStage = 1
-                elif connectionStage == 1:
-                    if data[0:26] == '-----BEGIN PUBLIC KEY-----':
+                elif connectionStage == 1: # receive public key, send our public key
+                    # TODO: Allow for RSA keys of arbitrary length (loop until key footer found
+                    if '-----BEGIN PUBLIC KEY-----' in data and '-----END PUBLIC KEY-----' in data:
                         # TODO: Store fingerprint of this key for host verification
                         print 'Received server public key. Importing...'
-                        serverPubkey = RSA.importKey(data)
+                        serverPubkeyBeg = data.index('-----BEGIN PUBLIC KEY-----')
+                        serverPubkeyEnd = data.index('-----END PUBLIC KEY-----') + 24 # 24 == length of key footer
+                        serverPubkeyString = data[serverPubkeyBeg:serverPubkeyEnd]
+                        serverPubkey = RSA.importKey(serverPubkeyString)
                         print 'Sending our public key...'
-                        print len(serverPubkey.encrypt(pubkey.exportKey(),32))
-                        s.send(serverPubkey.encrypt(pubkey.exportKey(), 32))
+                        s.send(pubkey.exportKey())
                         connectionStage = 2
-                elif connectionStage == 2:
+                elif connectionStage == 2: # send challenge
                     data = privkey.decrypt(data)
-                    if data == pubkey.exportKey():
-                        print 'Server identity verified.'
-                        print 'Connection Established.'
+                    if data == 'REQUESTCHALLENGE':
+                        # TODO: randomly generate this
+                        print 'Sending challenge...'
+                        challengeText = 'CHALLENGE'
+                        cipherText = serverPubkey.encrypt(challengeText, 32)[0]
+                        s.send(cipherText)
                         connectionStage = 3
+                elif connectionStage == 3: # verify challenge
+                    data = privkey.decrypt(data)
+                    if data == challengeText:
+                        print 'Challenge Complete.'
+                        print 'Connection established.'
+                        s.send('Yay!')
+                    connectionStage = 4
 
                 else:
                     print 'SERVER: ' + data

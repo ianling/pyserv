@@ -19,18 +19,26 @@ class Client(threading.Thread):
             data = self.clientSocket.recv(2048).strip()
             if data:
                 # connection initialization
-                if connectionStage == 0:
+                if connectionStage == 0: # verify banner, send pubkey
                     if data == 'RETURNBANNER':
                         connectionStage = 1
                         self.send(self.pubkey.exportKey())
-                elif connectionStage == 1:
-                    data = privkey.decrypt(data)
-                    clientPubkey = RSA.importKey(data)
-                    self.send(clientPubkey.encrypt(data, 32))
-                    connectionStage = 3 # TODO CHANGE THIS TO 2
-                elif connectionStage == 2:
-                    # TODO
-                    pass
+                elif connectionStage == 1: # receive pubkey, request challenge
+                    if '-----BEGIN PUBLIC KEY-----' in data and '-----END PUBLIC KEY-----' in data:
+                        clientPubkeyBeg = data.index('-----BEGIN PUBLIC KEY-----')
+                        clientPubkeyEnd = data.index('-----END PUBLIC KEY-----') + 24 # 24 == length of key footer
+                        clientPubkeyString = data[clientPubkeyBeg:clientPubkeyEnd]
+                        clientPubkey = RSA.importKey(clientPubkeyString)
+                        cipherText = clientPubkey.encrypt('REQUESTCHALLENGE', 32)[0]
+                        self.send(cipherText)
+                        connectionStage = 2
+                elif connectionStage == 2: # do challenge
+                    data = self.privkey.decrypt(data)
+                    cipherText = clientPubkey.encrypt(data, 32)[0]
+                    self.send(cipherText)
+                    connectionStage = 3
+                elif connectionStage == 3: # TODO
+                    connectionStage = 4
                 else:
                     # echo back certain commands
                     if data == 'HELLO':
@@ -58,7 +66,7 @@ if isfile('server_hostkey') and isfile('server_hostkey.pub'):
     pubkey = RSA.importKey(pubkeyString)
 else:
     print 'Generating new host RSA keys...'
-    privkey = RSA.generate(16384)
+    privkey = RSA.generate(4096)
     pubkey = privkey.publickey()
     # write them to files for future use
     privkeyString = privkey.exportKey()
