@@ -23,40 +23,53 @@ class Client(threading.Thread):
                     if data == 'RETURNBANNER':
                         connectionStage = 1
                         self.send(self.pubkey.exportKey())
+                    else:
+                        running = False
                 elif connectionStage == 1: # receive pubkey, request challenge
                     if '-----BEGIN PUBLIC KEY-----' in data and '-----END PUBLIC KEY-----' in data:
                         clientPubkeyBeg = data.index('-----BEGIN PUBLIC KEY-----')
                         clientPubkeyEnd = data.index('-----END PUBLIC KEY-----') + 24 # 24 == length of key footer
                         clientPubkeyString = data[clientPubkeyBeg:clientPubkeyEnd]
-                        clientPubkey = RSA.importKey(clientPubkeyString)
-                        cipherText = clientPubkey.encrypt('REQUESTCHALLENGE', 32)[0]
-                        self.send(cipherText)
+                        self.clientPubkey = RSA.importKey(clientPubkeyString)
+                        self.send_encrypted('REQUESTCHALLENGE')
                         connectionStage = 2
+                    else:
+                        running = False
                 elif connectionStage == 2: # do challenge
                     data = self.privkey.decrypt(data)
-                    cipherText = clientPubkey.encrypt(data, 32)[0]
-                    self.send(cipherText)
+                    self.send_encrypted(data)
                     connectionStage = 3
                 elif connectionStage == 3: # TODO
-                    connectionStage = 4
-                else:
+                    if data == 'Yay!':
+                        connectionStage = 4
+                    else:
+                        running = False
+                else: # connection fully established
+                    data = self.privkey.decrypt(data)
                     # echo back certain commands
                     if data == 'HELLO':
-                        self.send(data)
+                        self.send_encrypted(data)
                     elif data == 'BYE':
-                        self.send(data)
+                        self.send_encrypted(data)
                         running = False
                     # eval anything else
                     else:
                         try:
-                            self.clientSocket.send(str(eval(data)))
+                            self.send_encrypted(str(eval(data)))
                         except:
-                            self.clientSocket.send('Failed to evaluate: ' + data)
+                            self.send_encrypted('Failed to evaluate: ' + data)
             else:
                 self.clientSocket.close()
                 running = False
+        self.clientSocket.close()
+
+
     def send(self, msg):
         self.clientSocket.send(msg)
+
+    # encrypts msg with the client's public key and then sends it to the client
+    def send_encrypted(self, msg):
+        self.send(self.clientPubkey.encrypt(msg, 32)[0])
 
 # import/generate host RSA keys
 if isfile('server_hostkey') and isfile('server_hostkey.pub'):

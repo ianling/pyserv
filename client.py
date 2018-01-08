@@ -6,6 +6,10 @@ import select
 from os.path import isfile
 from Crypto.PublicKey import RSA
 
+
+def encrypt(msg, key):
+     return key.encrypt(msg, 32)[0]
+
 host = args[1]
 port = int(args[2])
 size = 2048
@@ -56,6 +60,9 @@ while running:
                         print 'Sending banner...'
                         s.send('RETURNBANNER')
                         connectionStage = 1
+                    else:
+                        print 'Received invalid/unsupported banner from server. Disconnecting...'
+                        running = False
                 elif connectionStage == 1: # receive public key, send our public key
                     # TODO: Allow for RSA keys of arbitrary length (loop until key footer found
                     if '-----BEGIN PUBLIC KEY-----' in data and '-----END PUBLIC KEY-----' in data:
@@ -68,6 +75,9 @@ while running:
                         print 'Sending our public key...'
                         s.send(pubkey.exportKey())
                         connectionStage = 2
+                    else:
+                        print 'Received invalid/malformed public key from server. Disconnecting...'
+                        running = False
                 elif connectionStage == 2: # send challenge
                     data = privkey.decrypt(data)
                     if data == 'REQUESTCHALLENGE':
@@ -77,21 +87,29 @@ while running:
                         cipherText = serverPubkey.encrypt(challengeText, 32)[0]
                         s.send(cipherText)
                         connectionStage = 3
+                    else:
+                        print 'Server did not request host verification challenge. Disconnecting...'
+                        running = False
                 elif connectionStage == 3: # verify challenge
                     data = privkey.decrypt(data)
                     if data == challengeText:
                         print 'Challenge Complete.'
                         print 'Connection established.'
                         s.send('Yay!')
-                    connectionStage = 4
+                        connectionStage = 4
+                    else:
+                        print 'Server failed host verification challenge. Disconnecting...'
+                        running = False
 
+                # connection is fully initialized
                 else:
+                    data = privkey.decrypt(data)
                     print 'SERVER: ' + data
                     # server acknowledging our disconnect
                     if data == 'BYE':
                         running = False
         elif i == stdin:
-            command = stdin.readline().strip()
+            command = encrypt(stdin.readline().strip(), serverPubkey)
             if command == 'exit':
                 running = False
             else:
